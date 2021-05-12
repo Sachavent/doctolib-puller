@@ -1,0 +1,22 @@
+{
+  "name": "doctolib-puller",
+  "version": "0.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node lib/index.js",
+    "dev": "npm run build && npm run start | bunyan"
+  },
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "audio-play": "^2.3.1",
+    "install": "^0.13.0",
+    "npm": "^7.12.1",
+    "play-sound": "^1.1.3"
+  },
+  "devDependencies": {
+    "bunyan": "^1.8.15"
+  }
+}
