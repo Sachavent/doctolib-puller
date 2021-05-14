@@ -1,8 +1,9 @@
 
 const https = require("https")
 var player = require('play-sound')(opts = {})
+const prompt = require('prompt-sync')();
 
-const secondesIntervalPulling = 3
+const secondesIntervalPulling = 2
 
 const visitMotifID1 = 6970
 const visitMotifID2 = 7005
@@ -10,53 +11,6 @@ const specialityID = 5494
 
 const hostName = 'www.doctolib.fr'
 let isMusicPlaying = false
-
-const centerIDs = [
-  6684432,
-  6907348,
-  6676117,
-  6939680,
-  6941592,
-  6939401,
-  6932232,
-  6938314,
-  6951024,
-  6681518,
-  6907464,
-  6938318,
-  6965253,
-  6937640,
-  6937641,
-  6940861,
-  6675682,
-  6939732,
-  6944443,
-  6938244,
-  6939336,
-  6795655,
-  6938316,
-  346417,
-  347824,
-  300598,
-  347339,
-  299946,
-  333070,
-  346723,
-  346295,
-  346295,
-  2731,
-  316126,
-  342359,
-  297441,
-  347233,
-  313456,
-  120858,
-  109359,
-  287549,
-  296572,
-  553859,
-]
-
 
 function intervals(seconds) {
   return new Promise((resolve) => {
@@ -78,51 +32,131 @@ async function checkAvailability(body, url) {
       })
     }
 
-    console.log("url", url)
-    console.log("availabilities", json.availabilities)
+    console.log("url called to get availability", url)
+    console.log("Slot availabled", JSON.stringify(json.availabilities))
     console.log(`Appointment available on : https://${hostName}/${json.search_result.link}`)
   }
 }
 
-async function requestAvailability(centerID) {
+async function request(host, path, method) {
   const options = {
-    hostname: hostName,
-    path: `/search_results/${centerID}.json?ref_visit_motive_ids%5B%5D=${visitMotifID1}&ref_visit_motive_ids%5B%5D=${visitMotifID2}&speciality_id=${specialityID}&search_result_format=json&force_max_limit=2`,
-    method: 'GET'
+    hostname: host,
+    path: path,
+    method: method
   }
 
   let url = `https://${options.hostname + options.path}`
-  const req = https.request(options, res => {
-    if (res.statusCode != 200) {
-      console.error(`Invalid code error on url ${url}`)
+  return new Promise((resolve, reject) => {
+    const req = https.request(options, res => {
+      if (res.statusCode != 200) {
+        console.error(`Invalid code error on url ${url}`)
+      }
+      let buf = ""
+      res.on('data', d => {
+        buf += d
+      })
+
+      res.on('end', () => {
+        return resolve(buf)
+      })
+    })
+
+    req.on('error', error => {
+      return reject(`Request failed '${error}' on url '${url}'`)
+    })
+
+    req.end()
+  })
+}
+
+async function requestAvailabilityByCenterID(centerID) {
+  let buf = []
+  try {
+    const path = `/search_results/${centerID}.json?ref_visit_motive_ids%5B%5D=${visitMotifID1}&ref_visit_motive_ids%5B%5D=${visitMotifID2}&speciality_id=${specialityID}&search_result_format=json&force_max_limit=2`
+    buf = await request(hostName, path, 'GET')
+    const url = `https://${hostName + path}`
+    return checkAvailability(buf, url)
+  } catch (err) {
+    return
+  }
+}
+
+async function getTotalOfPage(city) {
+  let buf = []
+  try {
+    buf = await request(hostName, `/vaccination-covid-19/${city}?ref_visit_motive_ids%5B%5D=${visitMotifID1}&ref_visit_motive_ids%5B%5D=${visitMotifID2}`, 'GET')
+    const regex = /search_results_total&quot;:\d+/;
+    const found = buf.match(regex)
+    if (found === null || found.length == 0) {
+      console.error(`[get-total-page] Cannot find any result on '${url}'`)
+      return
     }
-    let buf = ""
-    res.on('data', d => {
-      // check availability
-      buf += d
-    })
+    const splitArr = found[0].split(":")
+    if (!Array.isArray(splitArr) && splitArr.length < 2) {
+      console.log(`[get-total-page] Split str failed on '${found}' and url '${url}'`)
+      return
+    }
+    return Math.ceil(splitArr[1] / 10)
+  } catch (err) {
+    return
+  }
+}
 
-    res.on('end', () => {
-      checkAvailability(buf, url)
-    })
-  })
-
-  req.on('error', error => {
-    console.error(error)
-  })
-
-  req.end()
-
+async function getCenterIDs(pageNumber, city) {
+  let buf = []
+  try {
+    // Care: special case on first page ...
+    // Increment to get the correct page number
+    pageNumber++;
+    let path = ""
+    if (pageNumber == 1) {
+      path = `/vaccination-covid-19/${city}?ref_visit_motive_ids%5B%5D=${visitMotifID1}&ref_visit_motive_ids%5B%5D=${visitMotifID2}`
+    } else {
+      path = `/vaccination-covid-19/${city}?page=${pageNumber}&ref_visit_motive_ids%5B%5D=${visitMotifID1}&ref_visit_motive_ids%5B%5D=${visitMotifID2}`
+    }
+    buf = await request(hostName, path, 'GET')
+    const regex = /id="search-result-\d+/g
+    const found = buf.match(regex)
+    if (found === null || found.length == 0) {
+      console.error(`[get-center-id] Cannot find any result on '${url}'`)
+      return
+    }
+    let centerIDs = []
+    found.forEach(element => {
+      const splitArr = element.split("-")
+      if (!Array.isArray(splitArr) && splitArr.length < 3) {
+        console.log(`[get-center-id] Split str failed on '${element}' and url '${url}'`)
+        return
+      }
+      centerIDs.push(splitArr[2])
+    });
+    return centerIDs
+  } catch (err) {
+    return
+  }
 }
 
 async function startPulling() {
-  // Avoid duplicate centerIDs
+  const city = prompt('What is your city? (should be written like this : villeneuve-le-roi) ');
   while (true) {
-    await intervals(secondesIntervalPulling)
-    centerIDs.forEach(async (centerID) => {
-      await requestAvailability(centerID)
+    // Get number of page
+    const pageTotal = await getTotalOfPage(city)
+    if (pageTotal === null || typeof pageTotal !== "number") {
+      console.error("Cannot get number of page")
+    }
+
+    // Get center ids to check
+    var centerIDsArr = []
+    for (let i= 0; i < pageTotal; i++) {
+      const centerIDs = await getCenterIDs(i, city)
+      centerIDsArr.push(...centerIDs)
+    }
+
+    centerIDsArr.forEach(async (centerID) => {
+      await requestAvailabilityByCenterID(centerID)
     });
-    console.log("Nothing found ... Let's go again")
+    console.log("Let's go again")
+    await intervals(secondesIntervalPulling)
   }
 }
 
